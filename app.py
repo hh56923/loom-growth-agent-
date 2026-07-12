@@ -10,7 +10,6 @@ client = OpenAI(api_key=FIREWORKS_API_KEY,
                 base_url="https://api.fireworks.ai/inference/v1")
 
 # Seed headlines generated on the AMD Developer Cloud GPU (Qwen2-7B via vLLM).
-# Optional: if the file isn't present, the app still runs fine.
 try:
     with open("headlines_seed.json") as f:
         seed_headlines = json.load(f)
@@ -20,10 +19,30 @@ except Exception:
     seed_headlines = []
 
 st.set_page_config(page_title="Loom — Autonomous Growth Marketer", page_icon="🧵", layout="wide")
-st.title("🧵 Loom — Autonomous Growth Marketer")
+
+st.markdown("""<div style="background:linear-gradient(135deg,#6d28d9,#db2777);
+padding:24px;border-radius:16px;margin-bottom:8px">
+<div style="color:white;font-size:34px;font-weight:800">🧵 Loom</div>
+<div style="color:#f0e6ff;font-size:15px">Your autonomous growth team, in one agent · Gemma on AMD Instinct via Fireworks</div>
+</div>""", unsafe_allow_html=True)
+
 st.caption("Paste a product URL + goal. Loom researches the audience, writes copy + ad concepts, "
-           "builds landing-page variants, simulates an A/B audience, and tells you what to ship. "
-           "Powered by Google Gemma on AMD Instinct GPUs via Fireworks AI.")
+           "builds landing-page variants, drafts a video ad brief, simulates an A/B audience, "
+           "and tells you what to ship. Powered by Google Gemma on AMD Instinct GPUs via Fireworks AI.")
+
+def gen_ad_image(prompt_text):
+    try:
+        r = requests.post(
+            "https://api.fireworks.ai/inference/v1/image_generation/accounts/fireworks/models/flux-1-schnell-fp8",
+            headers={"Authorization": f"Bearer {FIREWORKS_API_KEY}",
+                     "Accept": "image/jpeg"},
+            json={"prompt": prompt_text, "width": 768, "height": 512},
+            timeout=45)
+        if r.status_code == 200 and r.headers.get("content-type","").startswith("image"):
+            return r.content
+    except Exception:
+        pass
+    return None
 
 def fetch_text(url):
     try:
@@ -72,6 +91,12 @@ Return ONLY valid JSON, no markdown, with EXACTLY this shape:
  "landing_variants": [
    {"name":"Variant A","angle":"...","hero":"...","subhead":"...","cta":"..."},
    {"name":"Variant B","angle":"...","hero":"...","subhead":"...","cta":"..."}
+ ],
+ "video_ad_prompt": "A detailed text-to-video prompt (Sora/Veo ready) for a 5-second ad, describing scene, motion, mood, and product feel",
+ "launch_timeline": [
+   {"week":"Week 1","focus":"..."},
+   {"week":"Week 2","focus":"..."},
+   {"week":"Week 3","focus":"..."}
  ],
  "ab_simulation": [
    {"persona":"...","prefers":"Variant A","why":"..."},
@@ -156,6 +181,10 @@ if go:
         for n in r["next_steps"]: st.write("→ " + n)
 
     st.subheader("🎨 Ad creatives")
+    top = d["ads"][0]
+    img = gen_ad_image(f"Advertising hero image for: {top['concept']}. {top['headline']}. Clean, modern, professional marketing visual, no text.")
+    if img:
+        st.image(img, caption=f"AI-generated on AMD Instinct (FLUX): {top['headline']}", width=500)
     cols = st.columns(3)
     for col, a in zip(cols, d["ads"]):
         with col: ad_card(a)
@@ -164,3 +193,12 @@ if go:
     lc = st.columns(2)
     for col, v in zip(lc, d["landing_variants"]):
         with col: landing_page(v)
+
+    st.subheader("🎬 Video ad prompt (Sora / Veo ready)")
+    st.code(d.get("video_ad_prompt", "—"), language=None)
+    st.caption("Paste into a text-to-video model to produce the ad. Generation is roadmap; the brief is live.")
+
+    if d.get("launch_timeline"):
+        st.subheader("🗓️ Launch timeline")
+        for t in d["launch_timeline"]:
+            st.write(f"**{t['week']}** — {t['focus']}")
