@@ -148,7 +148,7 @@ if go:
                 {"role":"system","content":"You output only raw JSON. No thinking, no explanation, no markdown. Your entire response must start with { and end with }."},
                 {"role":"user","content":prompt}
             ],
-            temperature=0.7, max_tokens=1600)
+            temperature=0.7, max_tokens=5000)
         raw = resp.choices[0].message.content.strip()
 
     d = extract_json(raw)
