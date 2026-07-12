@@ -1,12 +1,6 @@
 import os, json, re, requests
 import streamlit as st
 from openai import OpenAI
-import json
-try:
-    with open("headlines_seed.json") as f:
-        seed_headlines = json.load(f)
-except Exception:
-    seed_headlines = []
 
 FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY", "")
 # Paste the EXACT Gemma model ID you copied from the Fireworks Models page:
@@ -14,6 +8,16 @@ MODEL = os.environ.get("FIREWORKS_MODEL", "accounts/fireworks/models/gemma-4-31b
 
 client = OpenAI(api_key=FIREWORKS_API_KEY,
                 base_url="https://api.fireworks.ai/inference/v1")
+
+# Seed headlines generated on the AMD Developer Cloud GPU (Qwen2-7B via vLLM).
+# Optional: if the file isn't present, the app still runs fine.
+try:
+    with open("headlines_seed.json") as f:
+        seed_headlines = json.load(f)
+        if isinstance(seed_headlines, dict):
+            seed_headlines = seed_headlines.get("headlines", [])
+except Exception:
+    seed_headlines = []
 
 st.set_page_config(page_title="Loom — Autonomous Growth Marketer", page_icon="🧵", layout="wide")
 st.title("🧵 Loom — Autonomous Growth Marketer")
@@ -30,6 +34,23 @@ def fetch_text(url):
         return re.sub(r"\s+", " ", t)[:4000]
     except Exception:
         return ""
+
+def extract_json(s):
+    s = re.sub(r"^```json|^```|```$", "", s, flags=re.M).strip()
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == "{": depth += 1
+        elif s[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(s[start:i+1])
+                except Exception:
+                    return None
+    return None
 
 TEMPLATE = """You are Loom, an autonomous growth-marketing team in a single agent.
 Given a product and a goal, produce a complete go-to-market package.
@@ -71,6 +92,22 @@ def ad_card(a):
         padding:6px 14px;border-radius:20px;font-weight:600">{a['cta']}</div></div>""",
         unsafe_allow_html=True)
 
+def landing_page(v):
+    st.markdown(
+        f"""<div style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;
+        padding:34px 26px;text-align:center;color:#f8fafc;min-height:280px">
+        <div style="display:inline-block;background:#1e293b;color:#94a3b8;font-size:11px;
+        padding:4px 12px;border-radius:20px;text-transform:uppercase;letter-spacing:1px">
+        {v['name']} · {v['angle']}</div>
+        <div style="font-size:30px;font-weight:800;line-height:1.15;margin:20px 0 12px">
+        {v['hero']}</div>
+        <div style="font-size:15px;color:#cbd5e1;max-width:460px;margin:0 auto 24px">
+        {v['subhead']}</div>
+        <div style="display:inline-block;background:linear-gradient(135deg,#6d28d9,#db2777);
+        color:white;padding:12px 30px;border-radius:10px;font-weight:700;font-size:16px">
+        {v['cta']} →</div></div>""",
+        unsafe_allow_html=True)
+
 with st.form("f"):
     url = st.text_input("Product URL", "https://www.notion.so")
     goal = st.text_input("Goal", "Drive free-trial signups from indie startup founders")
@@ -82,14 +119,16 @@ if go:
         prompt = TEMPLATE.replace("<<CONTEXT>>", ctx).replace("<<GOAL>>", goal)
         resp = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role":"user","content":prompt}],
+            messages=[
+                {"role":"system","content":"You output only raw JSON. No thinking, no explanation, no markdown. Your entire response must start with { and end with }."},
+                {"role":"user","content":prompt}
+            ],
             temperature=0.7, max_tokens=1600)
         raw = resp.choices[0].message.content.strip()
-        raw = re.sub(r"^```json|^```|```$", "", raw, flags=re.M).strip()
-    try:
-        d = json.loads(raw)
-    except Exception:
-        st.error("Model didn't return clean JSON. Raw output below — just re-run.")
+
+    d = extract_json(raw)
+    if d is None:
+        st.error("Couldn't parse the model output — just hit Run again.")
         st.code(raw); st.stop()
 
     st.success(f"Done. Fireworks tokens used: {resp.usage.total_tokens} "
@@ -103,6 +142,10 @@ if go:
         st.write("**Channels:** " + ", ".join(d['audience']['channels']))
         st.subheader("✍️ Headlines")
         for h in d["headlines"]: st.write("• " + h)
+        if seed_headlines:
+            with st.expander("🔬 AMD-GPU seed ideas (Qwen2-7B via vLLM on AMD Developer Cloud)"):
+                for h in seed_headlines[:15]:
+                    st.write("• " + str(h))
     with c2:
         st.subheader("🧪 Simulated A/B audience")
         for p in d["ab_simulation"]:
@@ -120,8 +163,4 @@ if go:
     st.subheader("🖥️ Landing-page variants")
     lc = st.columns(2)
     for col, v in zip(lc, d["landing_variants"]):
-        with col:
-            st.markdown(f"**{v['name']} — {v['angle']}**")
-            st.markdown(f"### {v['hero']}")
-            st.write(v["subhead"])
-            st.button(v["cta"], key=v["name"])
+        with col: landing_page(v)
